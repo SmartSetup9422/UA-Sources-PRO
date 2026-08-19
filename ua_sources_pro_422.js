@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        🇺🇦 UA Sources PRO
 // @namespace   ua-sources-pro
-// @version     4.2.2
+// @version     4.3.0
 // @description Українські джерела для Lampa TV — пошук через Lampa.Search
 // @author      SmartSetup9422
 // @grant       none
@@ -10,63 +10,46 @@
 (function () {
     'use strict';
 
-    /*
-     * 4.2.0:
-     * - new unique guard so an older 4.1.x build cannot block this build
-     * - registers only after Lampa.Search is actually available
-     * - uses the Lampa Search API shape used by current Lampa
-     * - Lampa already encodeURIComponent()s params.query before calling source.search(),
-     *   therefore we decode it once instead of double-encoding it
-     * - UA-SOURCES-TEST is a deterministic registration test
-     */
-
-    if (window.ua_sources_pro_422_loaded) return;
-    window.ua_sources_pro_422_loaded = true;
-
-    var VERSION = '4.2.1';
-    var CACHE = 'ua_sources_pro_422_cache';
-    var REQUEST_TIMEOUT = 15000;
-    var sources = [];
+    var VERSION = '4.3.0';
+    var GUARD = 'ua_sources_pro_430_ready';
+    var CACHE = 'ua_sources_pro_430_cache';
+    var TIMEOUT = 15000;
     var registered = false;
-    var retryTimer = null;
+    var retry = null;
+
+    if (window[GUARD]) return;
+    window[GUARD] = true;
 
     function safe(fn, fallback) {
         try { return fn(); } catch (e) { return fallback; }
     }
 
-    function notify(text) {
-        safe(function () {
-            if (window.Lampa && Lampa.Noty && Lampa.Noty.show) {
-                Lampa.Noty.show(text);
-            }
-        });
-    }
-
     function log() {
         safe(function () {
-            if (window.console && console.log) {
-                console.log.apply(console, ['UA Sources PRO 4.2.2'].concat([].slice.call(arguments)));
-            }
+            console.log.apply(console, ['UA Sources PRO ' + VERSION].concat([].slice.call(arguments)));
         });
     }
 
-    function cleanText(value) {
+    function notify(text) {
+        safe(function () {
+            if (Lampa.Noty && Lampa.Noty.show) Lampa.Noty.show(text);
+        });
+    }
+
+    function clean(value) {
         return String(value || '').replace(/\s+/g, ' ').trim();
     }
 
     function decodeQuery(value) {
         value = String(value || '');
-        try {
-            return decodeURIComponent(value);
-        } catch (e) {
-            return value;
-        }
+        try { return decodeURIComponent(value); }
+        catch (e) { return value; }
     }
 
-    function absUrl(base, href) {
-        if (!href) return '';
-        try { return new URL(href, base).href; }
-        catch (e) { return href; }
+    function absolute(base, value) {
+        if (!value) return '';
+        try { return new URL(value, base).href; }
+        catch (e) { return value; }
     }
 
     function attr(node, name) {
@@ -77,22 +60,56 @@
         return safe(function () {
             var all = Lampa.Storage.get(CACHE, {});
             var item = all && all[key];
-            if (!item) return null;
-            if (Date.now() - item.time > 5 * 60 * 1000) return null;
+            if (!item || Date.now() - item.time > 5 * 60 * 1000) return null;
             return item.data;
         }, null);
     }
 
-    function cacheSet(key, value) {
+    function cacheSet(key, data) {
         safe(function () {
             var all = Lampa.Storage.get(CACHE, {});
-            all = all && typeof all === 'object' ? all : {};
-            all[key] = { time: Date.now(), data: value };
+            if (!all || typeof all !== 'object') all = {};
+            all[key] = { time: Date.now(), data: data };
             Lampa.Storage.set(CACHE, all);
         });
     }
 
-    function parseHtml(html, source) {
+    var sites = [
+        {
+            id: 'uakino',
+            title: 'UAKino 🇺🇦',
+            base: 'https://uakino.com.ua/',
+            search: function (q) {
+                return this.base + 'index.php?do=search&subaction=search&story=' + encodeURIComponent(q);
+            }
+        },
+        {
+            id: 'uafilm',
+            title: 'UAfilm 🇺🇦',
+            base: 'https://uafilm.pro/',
+            search: function (q) {
+                return this.base + 'index.php?do=search&subaction=search&story=' + encodeURIComponent(q);
+            }
+        },
+        {
+            id: 'uaflix',
+            title: 'UAFLIX 🇺🇦',
+            base: 'https://uafix.net/',
+            search: function (q) {
+                return this.base + 'index.php?do=search&subaction=search&story=' + encodeURIComponent(q);
+            }
+        },
+        {
+            id: 'uafilm_org',
+            title: 'UAFilm.org 🇺🇦',
+            base: 'https://uafilm.org/',
+            search: function (q) {
+                return this.base + 'index.php?do=search&subaction=search&story=' + encodeURIComponent(q);
+            }
+        }
+    ];
+
+    function parse(html, site) {
         var doc;
         try {
             doc = new DOMParser().parseFromString(String(html || ''), 'text/html');
@@ -106,31 +123,23 @@
 
         for (var i = 0; i < links.length && result.length < 40; i++) {
             var a = links[i];
-            var href = absUrl(source.base, attr(a, 'href'));
-            var title = cleanText(a.textContent || a.innerText || '');
+            var href = absolute(site.base, attr(a, 'href'));
+            var title = clean(a.textContent || a.innerText || '');
 
-            if (!href || href.indexOf(source.base) !== 0) continue;
+            if (!href || href.indexOf(site.base) !== 0) continue;
             if (!title || title.length < 2 || title.length > 180) continue;
+            if (/^(головна|категорії|увійти|реєстрація|пошук|menu|login|register)$/i.test(title)) continue;
 
             var card = a.closest ? a.closest('article, .item, .movie, .film, .shortstory, .card, .post, .th-item') : null;
-            var cardText = cleanText(card ? card.textContent : title);
-
-            var year = '';
-            var yearMatch = cardText.match(/\b(19|20)\d{2}\b/);
-            if (yearMatch) year = yearMatch[0];
-
-            var quality = '';
-            var qualityMatch = cardText.match(/\b(2160p|1440p|1080p|720p|576p|480p)\b/i);
-            if (qualityMatch) quality = qualityMatch[1].toUpperCase();
-
+            var text = clean(card ? card.textContent : title);
+            var yearMatch = text.match(/\b(19|20)\d{2}\b/);
+            var qualityMatch = text.match(/\b(2160p|1440p|1080p|720p|576p|480p)\b/i);
             var poster = '';
+
             if (card) {
                 var img = card.querySelector('img');
                 if (img) {
-                    poster = attr(img, 'data-src') ||
-                             attr(img, 'data-lazy-src') ||
-                             attr(img, 'data-original') ||
-                             attr(img, 'src');
+                    poster = attr(img, 'data-src') || attr(img, 'data-lazy-src') || attr(img, 'data-original') || attr(img, 'src');
                 }
             }
 
@@ -140,118 +149,58 @@
 
             result.push({
                 title: title,
-                name: title,
-                release_date: year || '0000',
-                year: year,
-                poster: absUrl(source.base, poster),
-                img: absUrl(source.base, poster),
-                quality: quality,
+                name: /серіал|сезон|season|episode/i.test(text) ? title : undefined,
+                release_date: yearMatch ? yearMatch[0] : '0000',
+                year: yearMatch ? yearMatch[0] : '',
+                poster: absolute(site.base, poster),
+                img: absolute(site.base, poster),
+                quality: qualityMatch ? qualityMatch[1].toUpperCase() : '',
                 audio: 'Українська',
-                source: source.id,
-                source_name: source.title,
+                source: site.id,
+                source_name: site.title,
                 url: href,
-                type: /серіал|сезон|season|episode/i.test(cardText) ? 'tv' : 'movie'
+                type: /серіал|сезон|season|episode/i.test(text) ? 'tv' : 'movie'
             });
         }
 
         return result;
     }
 
-    function request(source, query, done) {
-        var key = source.id + ':' + query.toLowerCase();
+    function request(site, query, done) {
+        var key = site.id + ':' + query.toLowerCase();
         var cached = cacheGet(key);
+        if (cached) return done(cached);
 
-        if (cached) {
-            done(cached);
-            return;
-        }
-
-        var network = null;
+        var req = null;
         var finished = false;
-        var timer = setTimeout(function () {
-            finish([]);
-        }, REQUEST_TIMEOUT);
+        var timer = setTimeout(function () { finish([]); }, TIMEOUT);
 
-        function finish(list) {
+        function finish(items) {
             if (finished) return;
             finished = true;
             clearTimeout(timer);
-
-            safe(function () {
-                if (network && network.clear) network.clear();
-            });
-
-            list = list || [];
-            cacheSet(key, list);
-            done(list);
+            safe(function () { if (req && req.clear) req.clear(); });
+            items = items || [];
+            cacheSet(key, items);
+            done(items);
         }
 
         try {
-            network = new Lampa.Reguest();
-            var url = source.searchUrl(query);
+            req = new Lampa.Reguest();
+            var url = site.search(query);
 
-            function success(html) {
-                finish(parseHtml(html, source));
-            }
-
-            function error() {
+            req.native(url, function (html) {
+                finish(parse(html, site));
+            }, function () {
                 finish([]);
-            }
-
-            if (network.native) {
-                network.native(url, success, error, false, { dataType: 'text' });
-            } else if (network.silent) {
-                network.silent(url, success, error, false, { dataType: 'text' });
-            } else {
-                finish([]);
-            }
+            }, false, { dataType: 'text', timeout: TIMEOUT });
         } catch (e) {
-            log('request error', source.id, e);
+            log('request failed', site.id, e);
             finish([]);
         }
     }
 
-    function addSource(source) {
-        sources.push(source);
-    }
-
-    addSource({
-        id: 'uakino',
-        title: 'UAKino 🇺🇦',
-        base: 'https://uakino.com.ua/',
-        searchUrl: function (q) {
-            return this.base + 'index.php?do=search&subaction=search&story=' + encodeURIComponent(q);
-        }
-    });
-
-    addSource({
-        id: 'uafilm',
-        title: 'UAfilm 🇺🇦',
-        base: 'https://uafilm.pro/',
-        searchUrl: function (q) {
-            return this.base + 'index.php?do=search&subaction=search&story=' + encodeURIComponent(q);
-        }
-    });
-
-    addSource({
-        id: 'uaflix',
-        title: 'UAFLIX 🇺🇦',
-        base: 'https://uafix.net/',
-        searchUrl: function (q) {
-            return this.base + 'index.php?do=search&subaction=search&story=' + encodeURIComponent(q);
-        }
-    });
-
-    addSource({
-        id: 'uafilm_org',
-        title: 'UAFilm.org 🇺🇦',
-        base: 'https://uafilm.org/',
-        searchUrl: function (q) {
-            return this.base + 'index.php?do=search&subaction=search&story=' + encodeURIComponent(q);
-        }
-    });
-
-    function testResult() {
+    function testItems() {
         return [{
             title: '🇺🇦 UA Sources PRO — ТЕСТ ПРАЦЮЄ',
             name: 'UA Sources PRO — ТЕСТ ПРАЦЮЄ',
@@ -262,7 +211,7 @@
             quality: 'TEST',
             audio: 'Українська',
             source: 'ua_sources_pro_test',
-            source_name: 'UA Sources PRO 4.2.2',
+            source_name: 'UA Sources PRO ' + VERSION,
             url: 'https://github.com/SmartSetup9422/UA-Sources-PRO',
             type: 'movie'
         }];
@@ -271,82 +220,60 @@
     function makeSource() {
         return {
             title: '🇺🇦 UA Sources PRO',
-
-            search: function (params, oncomplete) {
-                var query = decodeQuery(params && params.query ? params.query : '');
+            search: function (params, complete) {
+                var query = decodeQuery(params && params.query);
 
                 if (!query) {
-                    oncomplete([]);
+                    complete([]);
                     return;
                 }
 
                 if (query.trim().toUpperCase() === 'UA-SOURCES-TEST') {
-                    oncomplete([{
-                        title: '🇺🇦 UA Sources PRO',
-                        results: testResult()
-                    }]);
+                    complete([{ title: '🇺🇦 UA Sources PRO', results: testItems() }]);
                     return;
                 }
 
-                var pending = sources.length;
+                var pending = sites.length;
                 var all = [];
 
-                if (!pending) {
-                    oncomplete([]);
-                    return;
-                }
-
-                sources.forEach(function (source) {
-                    request(source, query, function (items) {
-                        if (items && items.length) {
-                            all = all.concat(items);
-                        }
-
+                sites.forEach(function (site) {
+                    request(site, query, function (items) {
+                        if (items && items.length) all = all.concat(items);
                         pending--;
 
-                        if (pending !== 0) return;
+                        if (pending) return;
 
-                        var unique = {};
-                        var clean = [];
+                        var map = {};
+                        var cleanItems = [];
 
                         all.forEach(function (item) {
-                            var key = (item.title || item.name || '').toLowerCase() +
-                                      '|' + (item.year || '') +
-                                      '|' + (item.url || '');
-
-                            if (!unique[key]) {
-                                unique[key] = true;
-                                clean.push(item);
+                            var key = (item.title || '').toLowerCase() + '|' + (item.year || '') + '|' + (item.url || '');
+                            if (!map[key]) {
+                                map[key] = true;
+                                cleanItems.push(item);
                             }
                         });
 
-                        oncomplete(clean.length ? [{
+                        complete(cleanItems.length ? [{
                             title: '🇺🇦 Українські джерела',
-                            results: clean
+                            results: cleanItems
                         }] : []);
                     });
                 });
             },
-
             onCancel: function () {},
-
             params: {
                 lazy: true,
                 align_left: true,
                 card_view: 6,
                 noimage: true,
-                card_events: {
-                    onMenu: function () {}
-                }
+                nofound: 'search_nofound'
             },
-
             onMore: function (params, close) {
                 if (close) close();
             },
-
             onSelect: function (params, close) {
                 var element = params && params.element;
-
                 if (close) close();
                 if (!element || !element.url) return;
 
@@ -368,58 +295,53 @@
     function register() {
         if (registered) return true;
 
-        if (!window.Lampa || !Lampa.Search ||
-            typeof Lampa.Search.addSource !== 'function') {
+        if (!window.Lampa || !Lampa.Search || typeof Lampa.Search.addSource !== 'function') {
             return false;
         }
 
         try {
             var source = makeSource();
             Lampa.Search.addSource(source);
-            window.ua_sources_pro_422_source = source;
+            window.ua_sources_pro_430_source = source;
+            window.ua_sources_pro_430_registered = true;
             registered = true;
-            window.ua_sources_pro_422_registered = true;
-            log('registered 4.2.2');
-            notify('🇺🇦 UA Sources PRO 4.2.2 підключено');
+            log('REGISTERED');
+            notify('🇺🇦 UA Sources PRO 4.3.0 підключено');
             return true;
         } catch (e) {
-            log('register error', e);
+            log('REGISTER ERROR', e);
             return false;
         }
     }
 
-    function start() {
+    function startPlugin() {
         if (register()) return;
 
-        // На актуальній Lampa безпечніше реєструвати пошукове джерело
-        // після повної ініціалізації Search.
+        if (window.appready && register()) return;
+
         if (window.Lampa && Lampa.Listener && Lampa.Listener.follow) {
-            Lampa.Listener.follow('app', function (e) {
-                if (e && e.type === 'ready') register();
+            Lampa.Listener.follow('app', function (event) {
+                if (event && event.type === 'ready') register();
             });
         }
 
-        if (retryTimer) return;
-
+        if (retry) return;
         var tries = 0;
-        retryTimer = setInterval(function () {
+        retry = setInterval(function () {
             tries++;
-
             if (register() || tries >= 120) {
-                clearInterval(retryTimer);
-                retryTimer = null;
-
+                clearInterval(retry);
+                retry = null;
                 if (!registered) {
-                    notify('UA Sources PRO: Lampa.Search не доступний');
-                    log('Lampa.Search unavailable after retry');
+                    log('Lampa.Search unavailable after 60 seconds');
+                    notify('UA Sources PRO: не вдалося підключити Lampa.Search');
                 }
             }
         }, 500);
     }
 
-    function boot() {
-        start();
+    if (!window.ua_sources_pro_430_plugin) {
+        window.ua_sources_pro_430_plugin = true;
+        startPlugin();
     }
-
-    boot();
 })();
