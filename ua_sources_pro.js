@@ -5,8 +5,6 @@
 // @description Українські джерела для Lampa TV
 // @author      SmartSetup9422
 // @grant       none
-// ==/UserScript==(function () 
-    // ==/UserScript==
    (function () {
 
     /*
