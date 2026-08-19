@@ -27,7 +27,7 @@
     if (window.ua_sources_pro_300) return;
     window.ua_sources_pro_300 = true;
 
-    var VERSION = '3.0.0';
+    var VERSION = '3.0.1';
     var adapters = [];
     var CACHE = 'ua_sources_pro_300_cache';
     var TTL = 5 * 60 * 1000;
