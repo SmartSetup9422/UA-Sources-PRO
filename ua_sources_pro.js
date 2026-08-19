@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        🇺🇦 UA Sources PRO
 // @namespace   ua-sources-pro
-// @version     4.2.0
+// @version     4.2.1
 // @description Українські джерела для Lampa TV — пошук через Lampa.Search
 // @author      SmartSetup9422
 // @grant       none
@@ -20,11 +20,11 @@
      * - UA-SOURCES-TEST is a deterministic registration test
      */
 
-    if (window.ua_sources_pro_420_loaded) return;
-    window.ua_sources_pro_420_loaded = true;
+    if (window.ua_sources_pro_421_loaded) return;
+    window.ua_sources_pro_421_loaded = true;
 
-    var VERSION = '4.2.0';
-    var CACHE = 'ua_sources_pro_420_cache';
+    var VERSION = '4.2.1';
+    var CACHE = 'ua_sources_pro_421_cache';
     var REQUEST_TIMEOUT = 15000;
     var sources = [];
     var registered = false;
@@ -45,7 +45,7 @@
     function log() {
         safe(function () {
             if (window.console && console.log) {
-                console.log.apply(console, ['UA Sources PRO 4.2.0'].concat([].slice.call(arguments)));
+                console.log.apply(console, ['UA Sources PRO 4.2.1'].concat([].slice.call(arguments)));
             }
         });
     }
@@ -262,7 +262,7 @@
             quality: 'TEST',
             audio: 'Українська',
             source: 'ua_sources_pro_test',
-            source_name: 'UA Sources PRO 4.2.0',
+            source_name: 'UA Sources PRO 4.2.1',
             url: 'https://github.com/SmartSetup9422/UA-Sources-PRO',
             type: 'movie'
         }];
@@ -377,9 +377,9 @@
         try {
             Lampa.Search.addSource(makeSource());
             registered = true;
-            window.ua_sources_pro_420_registered = true;
+            window.ua_sources_pro_421_registered = true;
             log('registered');
-            notify('🇺🇦 UA Sources PRO 4.2.0 підключено');
+            notify('🇺🇦 UA Sources PRO 4.2.1 підключено');
             return true;
         } catch (e) {
             log('register error', e);
@@ -409,17 +409,28 @@
     }
 
     /*
-     * Current Lampa exposes Lampa.Search from app initialization and emits
-     * the app-ready event. We also keep a delayed fallback for slow TV boxes.
+     * Bootstrap: do not assume window.Lampa exists when the extension loads.
+     * Poll until Search.addSource is available, then register exactly once.
      */
-    if (window.Lampa && window.appready) {
-        start();
-    } else if (window.Lampa && Lampa.Listener && Lampa.Listener.follow) {
-        Lampa.Listener.follow('app', function (event) {
-            if (event && event.type === 'ready') start();
-        });
-        setTimeout(start, 1500);
-    } else {
-        setTimeout(start, 1500);
+    function boot() {
+        if (register()) return;
+        if (retryTimer) return;
+
+        var tries = 0;
+        retryTimer = setInterval(function () {
+            tries++;
+            if (register()) {
+                clearInterval(retryTimer);
+                retryTimer = null;
+                return;
+            }
+            if (tries >= 120) {
+                clearInterval(retryTimer);
+                retryTimer = null;
+                log('Lampa.Search unavailable after 60s');
+            }
+        }, 500);
     }
+
+    boot();
 })();
