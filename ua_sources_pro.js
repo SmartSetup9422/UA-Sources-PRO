@@ -1,4 +1,11 @@
-(function () {
+// ==UserScript==
+// @name        🇺🇦 UA Sources PRO
+// @namespace   ua-sources-pro
+// @version     3.0.1
+// @description Українські джерела для Lampa TV
+// @author      SmartSetup9422
+// @grant       none
+// ==/UserScript==(function () {
     'use strict';
 
     /*
