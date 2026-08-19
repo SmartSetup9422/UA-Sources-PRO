@@ -5,8 +5,9 @@
 // @description Українські джерела для Lampa TV
 // @author      SmartSetup9422
 // @grant       none
-// ==/UserScript==(function () {
-    'use strict';
+// ==/UserScript==(function () 
+    // ==/UserScript==
+   (function () {
 
     /*
      * UA Sources PRO 3.0.0
